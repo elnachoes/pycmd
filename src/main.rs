@@ -1,19 +1,24 @@
 use std::{
-    env,
-    fs,
-    io::prelude::*,
-    io::Write,
-    process::Command
+    env::{ args, current_exe },
+    io::{ prelude::*, Write },
+    process::Command, 
+    path::PathBuf,
+    fs::OpenOptions,
 };
 
-fn install_python_program(args : &Vec<String>) {
+// this will load the PathBuf of the installed programs json which should be stored in the pycmd.exe dir
+fn load_exe_path_buf() -> PathBuf {
+    let mut exe_path_buf = current_exe().unwrap();
+    exe_path_buf.pop();
+    exe_path_buf.push("installed_programs.json");
+    exe_path_buf
+}
+
+fn install_python_program(program : &str, program_path : &str, program_dir : &str) {
+    let exe_path_buf = load_exe_path_buf();
+
     // read in the current programs file
-    let mut installed_programs_file = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open("installed_programs.json")
-        .unwrap();
+    let mut installed_programs_file = OpenOptions::new().create(true).read(true).write(true).open(exe_path_buf.clone()).unwrap();
 
     // read the file contents into a string that can be parsed
     let mut installed_programs_file_contents = String::new();
@@ -28,49 +33,57 @@ fn install_python_program(args : &Vec<String>) {
     };
 
     // add in the new program to the json
-    programs_json[args[2].as_str()] = json::object!{
-        program_path : args[3].as_str(),
-        program_dir : args[4].as_str()
+    programs_json[program] = json::object!{
+        program_path : program_path,
+        program_dir : program_dir
     };
 
     // reopen the file and wipe it.
-    installed_programs_file = fs::OpenOptions::new().write(true).truncate(true).open("installed_programs.json").unwrap();
+    installed_programs_file = OpenOptions::new().write(true).truncate(true).open(exe_path_buf.clone()).unwrap();
 
     // write all the contents out to the installed programs file
     installed_programs_file.write_all(json::stringify_pretty(programs_json, 4).as_bytes()).unwrap();
 }
 
-//TODO : fix this to run from the dir
-fn launch_program(program : &String) {
-    // read in the current programs file
-    let mut installed_programs_file = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open("installed_programs.json")
-        .unwrap();
+// this will launch a program stored within the installed programs json
+fn launch_program(program : &String) -> Result<(), &str> {
+    let exe_path_buf = load_exe_path_buf();
+
+    // try opening up the installed programs file
+    let mut installed_programs_file = match OpenOptions::new().create(true).read(true).write(true).open(exe_path_buf.clone()) 
+    {
+        Err(_) => return Err("error - no programs installed"),
+        Ok(file) => file
+    };
 
     // read the file contents into a string that can be parsed
     let mut installed_programs_file_contents = String::new();
     installed_programs_file.read_to_string(&mut installed_programs_file_contents).unwrap();
 
+    // parse the file contents into a json
     let programs_json = json::parse(&installed_programs_file_contents).unwrap();
 
     let program = &programs_json[program.as_str()];
 
-    Command::new("python")
-        .arg(program["program_path"].as_str().unwrap())
-        .current_dir(program["program_dir"].as_str().unwrap())
-        .spawn()
-        .unwrap();
+    // run the program as a spawned process
+    Command::new("python").arg(program["program_path"].as_str().unwrap()).current_dir(program["program_dir"].as_str().unwrap()).spawn().unwrap();
+
+    Ok(())
 }
 
 fn main() {
-    let args : Vec<String> = env::args().map(|x| String::from(x)).collect();
-    if args[1] == "-i".to_string() {
-        install_python_program(&args);
+    let args : Vec<String> = args().map(|x| String::from(x)).collect();
+
+    if args.len() == 5 && args[1] == "-i".to_string() {
+        install_python_program(&args[2], &args[3],&args[4]);
+    }
+    else if args.len() == 2 {
+        match launch_program(&args[1]) {
+            Err(error) => println!("{}", error),
+            _ => {}           
+        }
     }
     else {
-        launch_program(&args[1])
+        println!("error - you must install or launch a program");
     }
 }
